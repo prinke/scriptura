@@ -175,7 +175,7 @@ Created standardized editor configuration:
 Enhanced metadata and scripts:
 ```json
 {
-  "name": "scriptura",  // Updated from "biblebot"
+  "name": "scriptura",
   "description": "An open-source Discord bot...",
   "scripts": {
     "start": "node index.js",

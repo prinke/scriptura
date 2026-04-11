@@ -7,8 +7,6 @@
 
 Scriptura is an open-source Discord bot that allows users to retrieve Bible scripture directly in Discord using simple slash commands.
 
-Scriptura was formerly known as **BibleBot** and has since been renamed to better reflect its purpose and long-term vision.
-
 🌐 Website & Docs: https://scriptura.prinke.dev  
 ➕ [Add to Discord](https://discord.com/oauth2/authorize?client_id=1291760421115527251)  
 
@@ -143,19 +141,6 @@ API_BIBLE_KEY=your_api_bible_key
 `
 
 Refer to the repository documentation for exact setup instructions and command registration steps.
-
----
-
-## Renaming Notice
-
-This project was previously called **BibleBot**.
-
-The name has been changed to **Scriptura** to:
-- Avoid ambiguity
-- Better reflect the project’s scope
-- Support long-term growth
-
-Older references to BibleBot may still exist in commit history or documentation.
 
 ---
 
