@@ -76,7 +76,7 @@ Scriptura supports multiple Bible translations and defaults to **ESV (English St
 
 Scripture text is retrieved using third-party APIs:
 - **ESV.org API**
-- **api.bible**
+- **Bible Brain**
 
 Users may optionally save a preferred translation. This is the only user data Scriptura stores.
 
@@ -119,7 +119,7 @@ You can run your own instance of Scriptura.
 - A Discord application and bot token
 - API access to:
   - ESV.org (API key required)
-  - api.bible (API key required)
+  - Bible Brain (API key required)
 
 ---
 
@@ -137,7 +137,7 @@ Example environment variables:
 `
 DISCORD_TOKEN=your_discord_bot_token
 ESV_API_KEY=your_esv_api_key
-API_BIBLE_KEY=your_api_bible_key
+BIBLE_BRAIN_KEY=your_bible_brain_key
 `
 
 Refer to the repository documentation for exact setup instructions and command registration steps.
