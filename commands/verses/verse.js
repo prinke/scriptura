@@ -561,6 +561,7 @@ async function handleBibleBrain(interaction, verseQuery, translation, displayPre
 	});
 
 	if (result?.error) {
+		console.error(`[ERROR] Bible Brain (${translation} / "${verseQuery}"):`, result.message, result.status ?? '');
 		return replyError(
 			interaction,
 			'There was an error while executing this command!',

@@ -123,7 +123,7 @@ function updateDailyStatus(activeClient) {
 	try {
 		const reference = getDailyVerseReference();
 		activeClient.user.setPresence({
-			activities: [{ name: `Daily verse: ${reference}`, type: ActivityType.Watching }],
+			activities: [{ name: `${reference}`, type: ActivityType.Listening }],
 			status: 'online',
 		});
 	} catch (error) {
