@@ -20,7 +20,6 @@ const {
 	ActionRowBuilder,
 	ButtonBuilder,
 	ButtonStyle,
-	MessageFlags,
 } = require('discord.js');
 
 const {
@@ -35,6 +34,7 @@ const {
 const {
 	BIBLE_BRAIN_BIBLES,
 	translationChoices,
+	TRANSLATION_NAMES,
 	DEFAULT_TRANSLATION,
 	isValidTranslation,
 } = require('../../helpers/translations');
@@ -43,6 +43,12 @@ const {
 	getVerseDisplayPreferences,
 } = require('../../helpers/user_preferences');
 const { getDailyVerseReference } = require('../../helpers/daily_verse');
+const {
+	COLORS,
+	truncate,
+	bibleGatewayUrl,
+	errorReply,
+} = require('../../helpers/ui');
 
 
 const data = new SlashCommandBuilder()
@@ -84,11 +90,11 @@ const data = new SlashCommandBuilder()
 /** @constant {number} Maximum number of search results per page */
 const MAX_SEARCH_FIELDS = 10;
 
+/** @constant {number} Maximum characters shown per search result */
+const MAX_RESULT_LENGTH = 300;
+
 /** @constant {number} Pagination button timeout (2 minutes) */
 const PAGINATION_TIMEOUT_MS = 2 * 60 * 1000;
-
-/** @constant {Object} Flag for ephemeral (private) Discord replies */
-const EPHEMERAL_REPLY = { flags: MessageFlags.Ephemeral };
 
 const DEFAULT_DISPLAY_PREFS = {
 	footnotes: false,
@@ -97,6 +103,9 @@ const DEFAULT_DISPLAY_PREFS = {
 	lineByLine: 'auto',
 };
 
+/** @constant {string} Generic failure headline shown to users */
+const GENERIC_ERROR = 'Something went wrong';
+
 function resolveToggle(setting, defaultValue) {
 	if (setting === 'on') return true;
 	if (setting === 'off') return false;
@@ -104,44 +113,15 @@ function resolveToggle(setting, defaultValue) {
 }
 
 /**
- * Builds a formatted error message with contextual details.
- *
- * Creates a user-friendly error message that includes relevant context
- * like the query, translation, and helpful hints. Details are formatted
- * as a subtle footer using Discord's -# markdown syntax.
- *
- * @param {string} content - Main error message
- * @param {Object} [details={}] - Optional contextual information
- * @param {string} [details.query] - The verse query that failed
- * @param {string} [details.translation] - The Bible translation used
- * @param {string} [details.hint] - Additional helpful information
- * @returns {string} Formatted error message
- */
-function buildErrorMessage(content, { query, translation, hint } = {}) {
-	const details = [];
-	if (query) details.push(`Query: ${query}`);
-	if (translation) details.push(`Translation: ${translation}`);
-	if (hint) details.push(hint);
-	if (details.length === 0) return content;
-	return `${content}\n-# ${details.join(' • ')}`;
-}
-
-/**
- * Sends an ephemeral error reply to a Discord interaction.
- *
- * Convenience wrapper around interaction.reply that sends
- * an error message visible only to the user who triggered the command.
+ * Sends an ephemeral error embed in reply to a Discord interaction.
  *
  * @param {import('discord.js').ChatInputCommandInteraction} interaction - Discord interaction
- * @param {string} content - Error message to display
- * @param {Object} [details] - Optional details (passed to buildErrorMessage)
+ * @param {string} title - Short error headline
+ * @param {Object} [details] - Optional details (passed to errorEmbed)
  * @returns {Promise<void>}
  */
-function replyError(interaction, content, details) {
-	return interaction.reply({
-		content: buildErrorMessage(content, details),
-		...EPHEMERAL_REPLY,
-	});
+function replyError(interaction, title, details) {
+	return interaction.reply(errorReply(title, details));
 }
 
 /**
@@ -171,124 +151,38 @@ async function resolveTranslation(interaction, explicitTranslation) {
 }
 
 /**
- * Formats a range of results as a human-readable string.
+ * Builds a Discord embed for a page of search results.
  *
- * Examples:
- * - formatRange(0, 0) => "0"
- * - formatRange(0, 5) => "1-5"
- * - formatRange(10, 5) => "11-15"
- *
- * @param {number} start - Zero-based start index
- * @param {number} count - Number of items in range
- * @returns {string} Formatted range (e.g., "1-10" or "0")
- */
-function formatRange(start, count) {
-	if (count === 0) return '0';
-	return `${start + 1}-${start + count}`;
-}
-
-/**
- * Builds a Discord embed for Bible Brain search results.
- *
- * Creates a paginated embed displaying Bible search results with:
- * - Query and translation information
- * - Individual verse fields (up to MAX_SEARCH_FIELDS)
- * - Page number and result count in footer
- * - Automatic text truncation for long verses
+ * Each result is shown as a linked reference followed by the verse text,
+ * with page and total counts in the footer.
  *
  * @param {Object} data - Search result data
  * @param {string} data.query - The search query
- * @param {Array<{reference: string, text: string}>} data.verses - Array of verse results
- * @param {number} [data.total] - Total number of results
- * @param {string} translation - Bible translation code
- * @param {number} page - Current page number (0-indexed)
- * @param {number} pageSize - Number of results per page
- * @param {number} totalPages - Total number of pages
+ * @param {Array<{reference: string, text: string}>} data.results - Results on this page
+ * @param {number|null} data.total - Total number of results, if known
+ * @param {string} data.translation - Bible translation code
+ * @param {number} data.page - Current page number (0-indexed)
+ * @param {number} data.totalPages - Total number of pages
  * @returns {EmbedBuilder} Discord embed with search results
  */
-function buildSearchResultsEmbed(
-	{ query, verses, total },
-	translation,
-	page,
-	pageSize,
-	totalPages,
-) {
-	const start = page * pageSize;
-	const pageVerses = verses;
-	const embed = new EmbedBuilder()
-		.setTitle(`Search results: "${query}"`)
-		.setDescription(`Translation: **${translation}**`);
+function buildSearchResultsEmbed({ query, results, total, translation, page, totalPages }) {
+	const description = results
+		.map(({ reference, text }) => {
+			const ref = reference || 'Result';
+			const body = truncate((text || '').replace(/\s+/g, ' ').trim(), MAX_RESULT_LENGTH);
+			return `**[${ref}](${bibleGatewayUrl(ref, translation)})**\n${body || '*No text*'}`;
+		})
+		.join('\n\n');
 
-	if (totalPages > 1) {
-		embed.setFooter({
-			text:
-        typeof total === 'number'
-        	? `Page ${page + 1}/${totalPages} · Showing ${formatRange(start, pageVerses.length)} of ${total} results`
-        	: `Page ${page + 1}/${totalPages} · Showing ${formatRange(start, pageVerses.length)} results`,
-		});
-	}
+	const footer = [TRANSLATION_NAMES[translation] ?? translation];
+	if (typeof total === 'number') footer.push(`${total} result${total === 1 ? '' : 's'}`);
+	if (totalPages > 1) footer.push(`Page ${page + 1} of ${totalPages}`);
 
-	for (const verse of pageVerses) {
-		const value = (verse.text || '').trim();
-		embed.addFields({
-			name: verse.reference || 'Result',
-			value:
-        value.length > 1024 ? value.slice(0, 1021) + '…' : value || '(no text)',
-		});
-	}
-
-	return embed;
-}
-
-/**
- * Builds a Discord embed for ESV API search results.
- *
- * Similar to buildSearchResultsEmbed but tailored for ESV API response format.
- * Handles ESV-specific data structure where results may have 'content' instead of 'text'.
- *
- * @param {Object} data - ESV search result data
- * @param {Array<{reference: string, content?: string, text?: string}>} data.results - ESV search hits
- * @param {number} [data.total] - Total number of ESV results
- * @param {string} translation - Bible translation code (should be 'ESV')
- * @param {string} query - The search query
- * @param {number} page - Current page number (0-indexed)
- * @param {number} pageSize - Number of results per page
- * @param {number} totalPages - Total number of pages
- * @returns {EmbedBuilder} Discord embed with ESV search results
- */
-function buildEsvSearchResultsEmbed(
-	{ results, total },
-	translation,
-	query,
-	page,
-	pageSize,
-	totalPages,
-) {
-	const start = page * pageSize;
-	const pageResults = results || [];
-	const embed = new EmbedBuilder()
-		.setTitle(`Search results: "${query}"`)
-		.setDescription(`Translation: **${translation}**`);
-
-	if (totalPages > 1) {
-		embed.setFooter({
-			text:
-        typeof total === 'number'
-        	? `Page ${page + 1}/${totalPages} · Showing ${formatRange(start, pageResults.length)} of ${total} results`
-        	: `Page ${page + 1}/${totalPages} · Showing ${formatRange(start, pageResults.length)} results`,
-		});
-	}
-
-	for (const hit of pageResults) {
-		const value = (hit.content || hit.text || '').trim();
-		embed.addFields({
-			name: hit.reference || 'Result',
-			value:
-        value.length > 1024 ? value.slice(0, 1021) + '…' : value || '(no text)',
-		});
-	}
-
-	return embed;
+	return new EmbedBuilder()
+		.setColor(COLORS.brand)
+		.setTitle(`Search: “${truncate(query, 200)}”`)
+		.setDescription(truncate(description, 4096))
+		.setFooter({ text: footer.join(' · ') });
 }
 
 /**
@@ -312,42 +206,45 @@ function buildEsvSearchResultsEmbed(
  */
 async function sendPaginatedSearch(interaction, { pageSize, fetchPage, errorDetails }) {
 	let page = 0;
-	let totalItems = null;
 	let totalPages = 1;
 
 	const prevId = `verse_prev_${interaction.id}`;
 	const nextId = `verse_next_${interaction.id}`;
+	const pageId = `verse_page_${interaction.id}`;
 
-	const buildRow = () =>
+	const buildRow = (disabled = false) =>
 		new ActionRowBuilder().addComponents(
 			new ButtonBuilder()
 				.setCustomId(prevId)
-				.setLabel('Previous')
+				.setEmoji('◀️')
 				.setStyle(ButtonStyle.Secondary)
-				.setDisabled(page === 0),
+				.setDisabled(disabled || page === 0),
+			new ButtonBuilder()
+				.setCustomId(pageId)
+				.setLabel(`${page + 1} / ${totalPages}`)
+				.setStyle(ButtonStyle.Secondary)
+				.setDisabled(true),
 			new ButtonBuilder()
 				.setCustomId(nextId)
-				.setLabel('Next')
+				.setEmoji('▶️')
 				.setStyle(ButtonStyle.Secondary)
-				.setDisabled(page >= totalPages - 1),
+				.setDisabled(disabled || page >= totalPages - 1),
 		);
 
 	const first = await fetchPage(0);
 	if (first.error) {
-		return replyError(
-			interaction,
-			'There was an error while executing this command!',
-			errorDetails,
-		);
+		return replyError(interaction, GENERIC_ERROR, errorDetails);
 	}
 
 	if (!first.hasResults) {
-		return replyError(interaction, 'No results found.', errorDetails);
+		return replyError(interaction, 'No results found', {
+			...errorDetails,
+			hint: 'Try a different phrase or check the spelling.',
+		});
 	}
 
 	if (typeof first.totalItems === 'number') {
-		totalItems = first.totalItems;
-		totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+		totalPages = Math.max(1, Math.ceil(first.totalItems / pageSize));
 	}
 
 	const message = await interaction.reply({
@@ -366,19 +263,12 @@ async function sendPaginatedSearch(interaction, { pageSize, fetchPage, errorDeta
 	const updatePage = async (newPage, i) => {
 		const res = await fetchPage(newPage);
 		if (res.error) {
-			await i.reply({
-				content: buildErrorMessage(
-					'There was an error while executing this command!',
-					errorDetails,
-				),
-				...EPHEMERAL_REPLY,
-			});
+			await i.reply(errorReply(GENERIC_ERROR, errorDetails));
 			return;
 		}
 
 		if (typeof res.totalItems === 'number') {
-			totalItems = res.totalItems;
-			totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+			totalPages = Math.max(1, Math.ceil(res.totalItems / pageSize));
 		}
 
 		page = newPage;
@@ -398,10 +288,9 @@ async function sendPaginatedSearch(interaction, { pageSize, fetchPage, errorDeta
 	});
 
 	collector.on('end', async () => {
-		if (totalPages <= 1) return;
-		const row = buildRow();
-		row.components.forEach((component) => component.setDisabled(true));
-		await message.edit({ components: [row] });
+		await message.edit({ components: [buildRow(true)] }).catch((error) => {
+			console.error('[ERROR] Failed to disable pagination buttons:', error);
+		});
 	});
 }
 
@@ -422,23 +311,25 @@ async function sendPaginatedSearch(interaction, { pageSize, fetchPage, errorDeta
  * @param {string} translation - Translation code (should be 'ESV')
  * @returns {Promise<void>}
  */
-async function handleEsv(interaction, verseQuery, translation, displayPrefs) {
+async function handleEsv(interaction, verseQuery, translation, displayPrefs, embedOptions) {
 	let passageResult;
 	try {
 		const includeFootnotes = displayPrefs?.footnotes === true;
 		const includeHeadings = resolveToggle(displayPrefs?.headings, false);
+		const includeVerseNumbers = displayPrefs?.verseNumbers !== false;
 		passageResult = await esvPassageRequest(verseQuery, {
 			includeFootnotes,
 			includeHeadings,
+			includeVerseNumbers,
 		});
 	}
 	catch (error) {
 		console.error('ESV passage request failed:', error);
-		return replyError(
-			interaction,
-			'There was an error while executing this command!',
-			{ query: verseQuery, translation, hint: 'ESV passage request failed.' },
-		);
+		return replyError(interaction, GENERIC_ERROR, {
+			description: 'Couldn’t reach the ESV API. Please try again in a moment.',
+			query: verseQuery,
+			translation,
+		});
 	}
 
 	if (passageResult?.passages && passageResult.passages.length > 0) {
@@ -446,6 +337,7 @@ async function handleEsv(interaction, verseQuery, translation, displayPrefs) {
 			passageResult.passages[0],
 			passageResult.passage_meta?.[0]?.canonical ?? verseQuery,
 			translation,
+			embedOptions,
 		);
 
 		return interaction.reply({ embeds: [embed] });
@@ -457,27 +349,24 @@ async function handleEsv(interaction, verseQuery, translation, displayPrefs) {
 	}
 	catch (error) {
 		console.error('ESV search request failed:', error);
-		return replyError(
-			interaction,
-			'There was an error while executing this command!',
-			{ query: verseQuery, translation, hint: 'ESV search request failed.' },
-		);
-	}
-
-	if (!searchResult?.results || searchResult.results.length === 0) {
-		return replyError(interaction, 'No results found.', {
+		return replyError(interaction, GENERIC_ERROR, {
+			description: 'Couldn’t reach the ESV API. Please try again in a moment.',
 			query: verseQuery,
 			translation,
 		});
 	}
 
-	return sendPaginatedSearch(interaction, {
-		pageSize: MAX_SEARCH_FIELDS,
-		errorDetails: {
+	if (!searchResult?.results || searchResult.results.length === 0) {
+		return replyError(interaction, 'No results found', {
 			query: verseQuery,
 			translation,
-			hint: 'ESV search request failed.',
-		},
+			hint: 'Try a reference like “John 3:16” or a different phrase.',
+		});
+	}
+
+	return sendPaginatedSearch(interaction, {
+		pageSize: MAX_SEARCH_FIELDS,
+		errorDetails: { query: verseQuery, translation },
 		fetchPage: async (page) => {
 			try {
 				const pageNumber = page + 1;
@@ -498,14 +387,17 @@ async function handleEsv(interaction, verseQuery, translation, displayPrefs) {
 					error: false,
 					hasResults: results.length > 0,
 					totalItems,
-					embed: buildEsvSearchResultsEmbed(
-						{ results, total: totalItems },
+					embed: buildSearchResultsEmbed({
+						query: verseQuery,
+						results: results.map((hit) => ({
+							reference: hit.reference,
+							text: hit.content || hit.text,
+						})),
+						total: totalItems,
 						translation,
-						verseQuery,
 						page,
-						MAX_SEARCH_FIELDS,
 						totalPages,
-					),
+					}),
 				};
 			}
 			catch (error) {
@@ -534,12 +426,10 @@ async function handleEsv(interaction, verseQuery, translation, displayPrefs) {
  * @param {string} translation - Translation code (e.g., 'KJV', 'NIV')
  * @returns {Promise<void>}
  */
-async function handleBibleBrain(interaction, verseQuery, translation, displayPrefs) {
+async function handleBibleBrain(interaction, verseQuery, translation, displayPrefs, embedOptions) {
 	const bibleConfig = BIBLE_BRAIN_BIBLES[translation];
 	if (!bibleConfig) {
-		return replyError(interaction, `Unsupported translation: ${translation}.`, {
-			translation,
-		});
+		return replyError(interaction, 'Unsupported translation', { translation });
 	}
 
 	const includeNotes = displayPrefs?.footnotes === true;
@@ -562,33 +452,35 @@ async function handleBibleBrain(interaction, verseQuery, translation, displayPre
 
 	if (result?.error) {
 		console.error(`[ERROR] Bible Brain (${translation} / "${verseQuery}"):`, result.message, result.status ?? '');
-		return replyError(
-			interaction,
-			'There was an error while executing this command!',
-			{ query: verseQuery, translation, hint: 'Bible Brain request failed.' },
-		);
-	}
-
-	if (result.kind === 'empty') {
-		return replyError(interaction, 'No results found.', {
+		return replyError(interaction, GENERIC_ERROR, {
+			description: 'Couldn’t reach Bible Brain. Please try again in a moment.',
 			query: verseQuery,
 			translation,
 		});
 	}
 
+	if (result.kind === 'empty') {
+		return replyError(interaction, 'No results found', {
+			query: verseQuery,
+			translation,
+			hint: 'Try a reference like “John 3:16” or a different phrase.',
+		});
+	}
+
 	if (result.kind === 'passage') {
 		if (!result.text) {
-			return replyError(
-				interaction,
-				'Verse found, but could not parse passage content.',
-				{ query: verseQuery, translation, hint: 'Try a different translation.' },
-			);
+			return replyError(interaction, 'Couldn’t read that passage', {
+				query: verseQuery,
+				translation,
+				hint: 'Try a different translation.',
+			});
 		}
 
 		const embed = await verseEmbed(
 			result.text,
 			result.reference ?? verseQuery,
 			translation,
+			embedOptions,
 		);
 		return interaction.reply({ embeds: [embed] });
 	}
@@ -596,11 +488,7 @@ async function handleBibleBrain(interaction, verseQuery, translation, displayPre
 	if (result.kind === 'search') {
 		return sendPaginatedSearch(interaction, {
 			pageSize: MAX_SEARCH_FIELDS,
-			errorDetails: {
-				query: verseQuery,
-				translation,
-				hint: 'Bible Brain search request failed.',
-			},
+			errorDetails: { query: verseQuery, translation },
 			fetchPage: async (page) => {
 				const offset = page * MAX_SEARCH_FIELDS;
 				const res = await bibleBrainSearch(bibleConfig, verseQuery, {
@@ -624,26 +512,23 @@ async function handleBibleBrain(interaction, verseQuery, translation, displayPre
 					error: false,
 					hasResults: verses.length > 0,
 					totalItems,
-					embed: buildSearchResultsEmbed(
-						{
-							query: resultData?.query ?? verseQuery,
-							verses: verses.map((v) => ({
-								reference: v.reference,
-								text: v.text,
-							})),
-							total: totalItems,
-						},
+					embed: buildSearchResultsEmbed({
+						query: resultData?.query ?? verseQuery,
+						results: verses.map((v) => ({
+							reference: v.reference,
+							text: v.text,
+						})),
+						total: totalItems,
 						translation,
 						page,
-						MAX_SEARCH_FIELDS,
 						totalPages,
-					),
+					}),
 				};
 			},
 		});
 	}
 
-	return replyError(interaction, 'Unexpected response while searching.', {
+	return replyError(interaction, GENERIC_ERROR, {
 		query: verseQuery,
 		translation,
 	});
@@ -662,11 +547,9 @@ async function handleBibleBrain(interaction, verseQuery, translation, displayPre
 async function execute(interaction) {
 	const subcommand = interaction.options.getSubcommand(false);
 	if (!subcommand) {
-		return replyError(
-			interaction,
-			'Please choose a subcommand: search or daily.',
-			{ hint: 'Try /verse search with a reference or phrase.' },
-		);
+		return replyError(interaction, 'Choose a subcommand', {
+			hint: 'Try /verse search with a reference or phrase, or /verse daily.',
+		});
 	}
 
 	let displayPrefs = DEFAULT_DISPLAY_PREFS;
@@ -680,10 +563,11 @@ async function execute(interaction) {
 	if (subcommand === 'daily') {
 		const translation = await resolveTranslation(interaction, null);
 		const verseReference = getDailyVerseReference();
+		const embedOptions = { label: '☀️ Verse of the Day' };
 		if (translation === 'ESV') {
-			return handleEsv(interaction, verseReference, translation, displayPrefs);
+			return handleEsv(interaction, verseReference, translation, displayPrefs, embedOptions);
 		}
-		return handleBibleBrain(interaction, verseReference, translation, displayPrefs);
+		return handleBibleBrain(interaction, verseReference, translation, displayPrefs, embedOptions);
 	}
 
 	const verseQuery = interaction.options.getString('query');

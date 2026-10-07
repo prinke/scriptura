@@ -1,9 +1,10 @@
 /**
  * Preferences Command - Verse Display Settings
- * 
- * Allows users to configure how Bible verses are displayed, including
- * footnotes, headings, verse numbers, and line-by-line formatting.
- * 
+ *
+ * Opens an interactive settings panel where users can pick their preferred
+ * translation and toggle footnotes, headings, verse numbers, and
+ * line-by-line formatting. Changes are saved as soon as they are made.
+ *
  * @module commands/utility/preferences
  */
 
@@ -12,10 +13,20 @@ const {
 	InteractionContextType,
 	ApplicationIntegrationType,
 	MessageFlags,
+	ActionRowBuilder,
+	ButtonBuilder,
+	ButtonStyle,
+	ContainerBuilder,
+	SectionBuilder,
+	SeparatorBuilder,
+	SeparatorSpacingSize,
+	StringSelectMenuBuilder,
+	TextDisplayBuilder,
 } = require('discord.js');
 
 const {
 	translationChoices,
+	TRANSLATION_NAMES,
 	DEFAULT_TRANSLATION,
 	isValidTranslation,
 } = require('../../helpers/translations');
@@ -28,15 +39,50 @@ const {
 	resetVerseDisplayPreferences,
 } = require('../../helpers/user_preferences');
 
-const DISPLAY_TOGGLE_CHOICES = [
-	{ name: 'Auto', value: 'auto' },
-	{ name: 'On', value: 'on' },
-	{ name: 'Off', value: 'off' },
+const { COLORS, errorReply } = require('../../helpers/ui');
+
+/** @constant {number} How long the panel stays interactive (5 minutes) */
+const PANEL_TIMEOUT_MS = 5 * 60 * 1000;
+
+/** @constant {string[]} Cycle order for three-state settings */
+const TRI_STATE_ORDER = ['auto', 'on', 'off'];
+
+/**
+ * Settings shown in the panel, in display order.
+ *
+ * `boolean` settings flip between On and Off; `tri` settings cycle
+ * through Auto → On → Off.
+ */
+const SETTINGS = [
+	{
+		key: 'footnotes',
+		label: 'Footnotes',
+		description: 'Show footnotes and study notes below the passage',
+		type: 'boolean',
+	},
+	{
+		key: 'verseNumbers',
+		label: 'Verse numbers',
+		description: 'Show a number before each verse',
+		type: 'boolean',
+	},
+	{
+		key: 'headings',
+		label: 'Section headings',
+		description: 'Auto shows headings where the translation provides them',
+		type: 'tri',
+	},
+	{
+		key: 'lineByLine',
+		label: 'Line by line',
+		description: 'Put each verse on its own line · Auto uses this for Psalms',
+		type: 'tri',
+	},
 ];
 
 const data = new SlashCommandBuilder()
 	.setName('preferences')
-	.setDescription('Manage how Bible verses are displayed')
+	.setDescription('Change how Bible verses are displayed')
 	.setIntegrationTypes([
 		ApplicationIntegrationType.GuildInstall,
 		ApplicationIntegrationType.UserInstall,
@@ -45,176 +91,233 @@ const data = new SlashCommandBuilder()
 		InteractionContextType.Guild,
 		InteractionContextType.PrivateChannel,
 		InteractionContextType.BotDM,
-	])
-	.addSubcommand((subcommand) =>
-		subcommand
-			.setName('set')
-			.setDescription('Update your verse display preferences')
-			.addBooleanOption((option) =>
-				option
-					.setName('footnotes')
-					.setDescription('Show footnotes and study notes'),
-			)
-			.addStringOption((option) =>
-				option
-					.setName('translation')
-					.setDescription('Preferred Bible translation')
-					.addChoices(...translationChoices),
-			)
-			.addStringOption((option) =>
-				option
-					.setName('headings')
-					.setDescription('Show section headings')
-					.addChoices(...DISPLAY_TOGGLE_CHOICES),
-			)
-			.addBooleanOption((option) =>
-				option
-					.setName('verse_numbers')
-					.setDescription('Show verse numbers'),
-			)
-			.addStringOption((option) =>
-				option
-					.setName('line_by_line')
-					.setDescription('Format poetry/psalms line by line')
-					.addChoices(...DISPLAY_TOGGLE_CHOICES),
-			),
-	)
-	.addSubcommand((subcommand) =>
-		subcommand
-			.setName('view')
-			.setDescription('View your current verse display preferences'),
-	)
-	.addSubcommand((subcommand) =>
-		subcommand
-			.setName('reset')
-			.setDescription('Reset verse display preferences to defaults'),
-	);
+	]);
 
-function formatToggle(value) {
-	if (value === 'on') return 'On';
-	if (value === 'off') return 'Off';
-	return 'Auto';
+/**
+ * Loads the user's current translation and display preferences.
+ *
+ * @param {string} userId - Discord user ID
+ * @returns {Promise<{translation: string, display: Object}>} Current preferences
+ */
+async function loadPreferences(userId) {
+	const [preferred, display] = await Promise.all([
+		getPreferredTranslation(userId),
+		getVerseDisplayPreferences(userId),
+	]);
+	return {
+		translation: isValidTranslation(preferred) ? preferred : DEFAULT_TRANSLATION,
+		display,
+	};
 }
 
-function formatPreferences(preferences) {
-	return [
-		`Footnotes: **${preferences.footnotes ? 'On' : 'Off'}**`,
-		`Headings: **${formatToggle(preferences.headings)}**`,
-		`Verse numbers: **${preferences.verseNumbers ? 'On' : 'Off'}**`,
-		`Line by line: **${formatToggle(preferences.lineByLine)}**`,
-	].join('\n');
+/**
+ * Builds the toggle button for a single setting.
+ *
+ * @param {Object} setting - Entry from SETTINGS
+ * @param {boolean|string} value - Current value
+ * @param {string} customId - Button custom ID
+ * @param {boolean} disabled - Whether the button is disabled
+ * @returns {ButtonBuilder} Toggle button
+ */
+function buildToggleButton(setting, value, customId, disabled) {
+	let label;
+	let style;
+
+	if (setting.type === 'boolean') {
+		label = value ? 'On' : 'Off';
+		style = value ? ButtonStyle.Success : ButtonStyle.Secondary;
+	}
+	else if (value === 'on') {
+		label = 'On';
+		style = ButtonStyle.Success;
+	}
+	else if (value === 'off') {
+		label = 'Off';
+		style = ButtonStyle.Secondary;
+	}
+	else {
+		label = 'Auto';
+		style = ButtonStyle.Primary;
+	}
+
+	return new ButtonBuilder()
+		.setCustomId(customId)
+		.setLabel(label)
+		.setStyle(style)
+		.setDisabled(disabled);
+}
+
+/**
+ * Builds the full settings panel as a Components V2 container.
+ *
+ * @param {Object} prefs - Result of loadPreferences
+ * @param {string} idPrefix - Prefix for component custom IDs
+ * @param {Object} [options={}] - Panel state
+ * @param {boolean} [options.expired=false] - Disable all controls
+ * @param {string} [options.status] - Short status line shown at the bottom
+ * @returns {ContainerBuilder} Settings panel
+ */
+function buildPanel(prefs, idPrefix, { expired = false, status } = {}) {
+	const container = new ContainerBuilder()
+		.setAccentColor(COLORS.brand)
+		.addTextDisplayComponents(
+			new TextDisplayBuilder().setContent(
+				'## ⚙️ Preferences\nChoose how Scriptura shows Bible verses. Changes save instantly.',
+			),
+		)
+		.addSeparatorComponents(new SeparatorBuilder().setSpacing(SeparatorSpacingSize.Large))
+		.addTextDisplayComponents(
+			new TextDisplayBuilder().setContent(
+				`**Translation**\n-# Used by /verse unless you pick one. Currently ${TRANSLATION_NAMES[prefs.translation] ?? prefs.translation}.`,
+			),
+		)
+		.addActionRowComponents(
+			new ActionRowBuilder().addComponents(
+				new StringSelectMenuBuilder()
+					.setCustomId(`${idPrefix}:translation`)
+					.setPlaceholder('Choose a translation')
+					.setDisabled(expired)
+					.addOptions(
+						translationChoices.map(({ value }) => ({
+							label: value,
+							description: TRANSLATION_NAMES[value] ?? value,
+							value,
+							default: value === prefs.translation,
+						})),
+					),
+			),
+		)
+		.addSeparatorComponents(new SeparatorBuilder().setSpacing(SeparatorSpacingSize.Large));
+
+	for (const setting of SETTINGS) {
+		container.addSectionComponents(
+			new SectionBuilder()
+				.addTextDisplayComponents(
+					new TextDisplayBuilder().setContent(`**${setting.label}**\n-# ${setting.description}`),
+				)
+				.setButtonAccessory(
+					buildToggleButton(
+						setting,
+						prefs.display[setting.key],
+						`${idPrefix}:${setting.key}`,
+						expired,
+					),
+				),
+		);
+	}
+
+	container
+		.addSeparatorComponents(new SeparatorBuilder().setSpacing(SeparatorSpacingSize.Large))
+		.addActionRowComponents(
+			new ActionRowBuilder().addComponents(
+				new ButtonBuilder()
+					.setCustomId(`${idPrefix}:reset`)
+					.setLabel('Reset display settings')
+					.setStyle(ButtonStyle.Danger)
+					.setDisabled(expired),
+			),
+		);
+
+	const footer = expired
+		? 'This menu has expired. Run /preferences again to make more changes.'
+		: status;
+	if (footer) {
+		container.addTextDisplayComponents(new TextDisplayBuilder().setContent(`-# ${footer}`));
+	}
+
+	return container;
+}
+
+/**
+ * Applies a single panel interaction to the user's stored preferences.
+ *
+ * @param {import('discord.js').MessageComponentInteraction} i - Component interaction
+ * @param {string} action - Setting key, "translation", or "reset"
+ * @param {Object} current - Current preferences (from loadPreferences)
+ * @returns {Promise<string>} Status line describing the change
+ */
+async function applyChange(i, action, current) {
+	const userId = i.user.id;
+
+	if (action === 'translation') {
+		const translation = i.values[0];
+		if (!isValidTranslation(translation)) throw new Error(`Invalid translation: ${translation}`);
+		await setPreferredTranslation(userId, translation);
+		return `Translation set to ${translation}.`;
+	}
+
+	if (action === 'reset') {
+		await resetVerseDisplayPreferences(userId);
+		return 'Display settings reset to defaults.';
+	}
+
+	const setting = SETTINGS.find((s) => s.key === action);
+	if (!setting) throw new Error(`Unknown preference: ${action}`);
+
+	const value = current.display[setting.key];
+	const next = setting.type === 'boolean'
+		? !value
+		: TRI_STATE_ORDER[(TRI_STATE_ORDER.indexOf(value) + 1) % TRI_STATE_ORDER.length];
+
+	await setVerseDisplayPreferences(userId, { [setting.key]: next });
+
+	const label = next === true ? 'on' : next === false ? 'off' : next;
+	return `${setting.label} set to ${label}.`;
 }
 
 /**
  * Execute the preferences command.
- * 
+ *
  * @param {import('discord.js').ChatInputCommandInteraction} interaction - Discord interaction
  * @returns {Promise<void>}
  */
 async function execute(interaction) {
-	const subcommand = interaction.options.getSubcommand(false);
+	const idPrefix = `prefs:${interaction.id}`;
 
-	if (subcommand === 'set') {
-		const footnotes = interaction.options.getBoolean('footnotes');
-		const translation = interaction.options.getString('translation');
-		const headings = interaction.options.getString('headings');
-		const verseNumbers = interaction.options.getBoolean('verse_numbers');
-		const lineByLine = interaction.options.getString('line_by_line');
-
-		const hasAnyUpdate =
-			typeof footnotes === 'boolean' ||
-			typeof translation === 'string' ||
-			typeof headings === 'string' ||
-			typeof verseNumbers === 'boolean' ||
-			typeof lineByLine === 'string';
-
-		if (!hasAnyUpdate) {
-			return interaction.reply({
-				content: 'Choose at least one preference to update.',
-				flags: MessageFlags.Ephemeral,
-			});
-		}
-
-		try {
-			if (translation) {
-				if (!isValidTranslation(translation)) {
-					return interaction.reply({
-						content: 'Unsupported translation selected. Please choose a valid option.',
-						flags: MessageFlags.Ephemeral,
-					});
-				}
-				await setPreferredTranslation(interaction.user.id, translation);
-			}
-
-			await setVerseDisplayPreferences(interaction.user.id, {
-				footnotes,
-				headings,
-				verseNumbers,
-				lineByLine,
-			});
-
-			const updated = await getVerseDisplayPreferences(interaction.user.id);
-			const preferred = await getPreferredTranslation(interaction.user.id);
-			const activeTranslation = isValidTranslation(preferred)
-				? preferred
-				: DEFAULT_TRANSLATION;
-			return interaction.reply({
-				content: `Your preferences have been updated:\nTranslation: **${activeTranslation}**\n${formatPreferences(updated)}`,
-				flags: MessageFlags.Ephemeral,
-			});
-		} catch (error) {
-			console.error('[ERROR] Failed to save verse display preferences:', error);
-			return interaction.reply({
-				content: 'There was an error saving your preferences. Please try again later.',
-				flags: MessageFlags.Ephemeral,
-			});
-		}
+	let prefs;
+	try {
+		prefs = await loadPreferences(interaction.user.id);
+	}
+	catch (error) {
+		console.error('[ERROR] Failed to load preferences:', error);
+		return interaction.reply(errorReply('Couldn’t load your preferences', {
+			hint: 'Please try again in a moment.',
+		}));
 	}
 
-	if (subcommand === 'view') {
+	const response = await interaction.reply({
+		components: [buildPanel(prefs, idPrefix)],
+		flags: MessageFlags.Ephemeral | MessageFlags.IsComponentsV2,
+	});
+
+	const collector = response.createMessageComponentCollector({
+		idle: PANEL_TIMEOUT_MS,
+		filter: (i) => i.user.id === interaction.user.id && i.customId.startsWith(`${idPrefix}:`),
+	});
+
+	collector.on('collect', async (i) => {
+		const action = i.customId.slice(idPrefix.length + 1);
 		try {
-			const preferences = await getVerseDisplayPreferences(interaction.user.id);
-			const preferred = await getPreferredTranslation(interaction.user.id);
-			const activeTranslation = isValidTranslation(preferred)
-				? preferred
-				: DEFAULT_TRANSLATION;
-			return interaction.reply({
-				content: `Your current preferences:\nTranslation: **${activeTranslation}**\n${formatPreferences(preferences)}`,
-				flags: MessageFlags.Ephemeral,
-			});
-		} catch (error) {
-			console.error('[ERROR] Failed to load verse display preferences:', error);
-			return interaction.reply({
-				content: 'There was an error loading your preferences. Please try again later.',
-				flags: MessageFlags.Ephemeral,
+			const status = await applyChange(i, action, prefs);
+			prefs = await loadPreferences(interaction.user.id);
+			await i.update({ components: [buildPanel(prefs, idPrefix, { status: `✓ ${status}` })] });
+		}
+		catch (error) {
+			console.error('[ERROR] Failed to save preferences:', error);
+			await i.reply(errorReply('Couldn’t save that change', {
+				hint: 'Please try again in a moment.',
+			})).catch((replyError) => {
+				console.error('[ERROR] Failed to send preferences error:', replyError);
 			});
 		}
-	}
+	});
 
-	if (subcommand === 'reset') {
-		try {
-			await resetVerseDisplayPreferences(interaction.user.id);
-			const preferences = await getVerseDisplayPreferences(interaction.user.id);
-			const preferred = await getPreferredTranslation(interaction.user.id);
-			const activeTranslation = isValidTranslation(preferred)
-				? preferred
-				: DEFAULT_TRANSLATION;
-			return interaction.reply({
-				content: `Your preferences have been reset:\nTranslation: **${activeTranslation}**\n${formatPreferences(preferences)}`,
-				flags: MessageFlags.Ephemeral,
+	collector.on('end', async () => {
+		await interaction
+			.editReply({ components: [buildPanel(prefs, idPrefix, { expired: true })] })
+			.catch((error) => {
+				console.error('[ERROR] Failed to expire preferences panel:', error);
 			});
-		} catch (error) {
-			console.error('[ERROR] Failed to reset verse display preferences:', error);
-			return interaction.reply({
-				content: 'There was an error resetting your preferences. Please try again later.',
-				flags: MessageFlags.Ephemeral,
-			});
-		}
-	}
-
-	return interaction.reply({
-		content: 'Please choose a subcommand: set, view, or reset.',
-		flags: MessageFlags.Ephemeral,
 	});
 }
 

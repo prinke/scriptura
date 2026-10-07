@@ -8,6 +8,9 @@
  * @module index
  */
 
+// Load environment variables before any module that reads them at load time
+require('dotenv').config();
+
 const fs = require('node:fs');
 const path = require('node:path');
 const {
@@ -15,15 +18,19 @@ const {
 	Collection,
 	Events,
 	GatewayIntentBits,
-	MessageFlags,
 	ActivityType,
 } = require('discord.js');
+const { errorReply } = require('./helpers/ui');
 const { connectMongo } = require('./helpers/mongo');
 const { getDailyVerseReference } = require('./helpers/daily_verse');
-require('dotenv').config();
+const { handleVoiceStateUpdate } = require('./helpers/voice_session');
+const { startDailyVerseScheduler } = require('./helpers/daily_verse_scheduler');
 
-// Initialize Discord client with required intents
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+// Initialize Discord client with required intents.
+// GuildVoiceStates lets the bot see which voice channel a user is in.
+const client = new Client({
+	intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
+});
 
 // Collection to store all loaded commands
 client.commands = new Collection();
@@ -65,6 +72,19 @@ for (const folder of commandFolders) {
  * Provides error handling and user feedback for command execution failures.
  */
 client.on(Events.InteractionCreate, async (interaction) => {
+	// Route autocomplete suggestions to the command's autocomplete handler
+	if (interaction.isAutocomplete()) {
+		const command = interaction.client.commands.get(interaction.commandName);
+		if (!command?.autocomplete) return;
+		try {
+			await command.autocomplete(interaction);
+		}
+		catch (error) {
+			console.error(`[ERROR] Autocomplete failed for "${interaction.commandName}":`, error);
+		}
+		return;
+	}
+
 	// Only handle slash command interactions
 	if (!interaction.isChatInputCommand()) return;
 
@@ -83,17 +103,31 @@ client.on(Events.InteractionCreate, async (interaction) => {
 		console.error(`[ERROR] Failed to execute command "${interaction.commandName}":`, error);
 		
 		// Provide user-friendly error feedback
-		const errorMessage = {
-			content: 'There was an error while executing this command!',
-			flags: MessageFlags.Ephemeral,
-		};
+		const errorMessage = errorReply('Something went wrong', {
+			description: 'An unexpected error occurred while running this command.',
+			hint: 'Please try again in a moment.',
+		});
 
 		// Send error response based on interaction state
-		if (interaction.replied || interaction.deferred) {
-			await interaction.followUp(errorMessage);
-		} else {
-			await interaction.reply(errorMessage);
-		}
+		const send = interaction.replied || interaction.deferred
+			? interaction.followUp(errorMessage)
+			: interaction.reply(errorMessage);
+		await send.catch((replyError) => {
+			console.error('[ERROR] Failed to send error response:', replyError);
+		});
+	}
+});
+
+/**
+ * Event handler for voice state changes.
+ * Lets audio sessions follow the bot and leave empty channels.
+ */
+client.on(Events.VoiceStateUpdate, (oldState, newState) => {
+	try {
+		handleVoiceStateUpdate(oldState, newState);
+	}
+	catch (error) {
+		console.error('[ERROR] Failed to handle voice state update:', error);
 	}
 });
 
@@ -105,6 +139,7 @@ client.once(Events.ClientReady, (readyClient) => {
 	console.log(`[SUCCESS] Bot is ready! Logged in as ${readyClient.user.tag}`);
 	updateDailyStatus(readyClient);
 	scheduleDailyStatusUpdates(readyClient);
+	startDailyVerseScheduler(readyClient);
 });
 
 // Login to Discord using the bot token from environment variables

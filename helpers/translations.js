@@ -54,6 +54,20 @@ const translationChoices = [
 ];
 
 /**
+ * Full display names for each translation code.
+ *
+ * @constant {Object.<string, string>}
+ */
+const TRANSLATION_NAMES = {
+	ESV: 'English Standard Version',
+	NKJV: 'New King James Version',
+	KJV: 'King James Version',
+	NASB: 'New American Standard Bible',
+	NLT: 'New Living Translation',
+	ASV: 'American Standard Version',
+};
+
+/**
  * Validates a translation code against supported options.
  *
  * @param {string} translation - Translation code to validate
@@ -68,6 +82,7 @@ function isValidTranslation(translation) {
 module.exports = {
 	BIBLE_BRAIN_BIBLES,
 	translationChoices,
+	TRANSLATION_NAMES,
 	DEFAULT_TRANSLATION,
 	isValidTranslation,
 };

@@ -15,6 +15,9 @@
 /** @constant {string} ESV API endpoint for passage text retrieval */
 const ESV_PASSAGE_URL = 'https://api.esv.org/v3/passage/text/';
 
+/** @constant {string} ESV API endpoint for passage audio (redirects to an MP3) */
+const ESV_AUDIO_URL = "https://api.esv.org/v3/passage/audio/";
+
 /** @constant {string} ESV API endpoint for search queries */
 const ESV_SEARCH_URL = 'https://api.esv.org/v3/passage/search/';
 
@@ -121,6 +124,7 @@ async function esvRequest(url) {
  * @param {Object} [options={}] - Passage formatting options
  * @param {boolean} [options.includeFootnotes=false] - Include footnotes in the passage text
  * @param {boolean} [options.includeHeadings=false] - Include section headings in the passage text
+ * @param {boolean} [options.includeVerseNumbers=true] - Include verse numbers in the passage text
  * @returns {Promise<Object>} ESV API passage response
  * @throws {Error} On API failure or timeout
  * 
@@ -130,7 +134,7 @@ async function esvRequest(url) {
  */
 async function esvPassageRequest(
   verse,
-  { includeFootnotes = false, includeHeadings = false } = {},
+  { includeFootnotes = false, includeHeadings = false, includeVerseNumbers = true } = {},
 ) {
   const query = new URLSearchParams({
     "include-footnote-body": includeFootnotes ? "true" : "false",
@@ -138,6 +142,7 @@ async function esvPassageRequest(
     "include-passage-references": "false",
     "include-short-copyright": "false",
     "include-headings": includeHeadings ? "true" : "false",
+    "include-verse-numbers": includeVerseNumbers ? "true" : "false",
     q: verse,
   });
 
@@ -180,7 +185,55 @@ async function esvSearchRequest(text, { page, pageSize } = {}) {
   return esvRequest(url);
 }
 
+/**
+ * Resolves the MP3 URL for a passage's ESV audio recording.
+ *
+ * The ESV API responds with a redirect to a public MP3 on audio.esv.org.
+ * The redirect target is returned instead of followed so the caller can
+ * stream it without sending the API token.
+ *
+ * @param {string} passage - Bible reference (e.g., "John 3", "Psalm 23")
+ * @returns {Promise<string|null>} MP3 URL, or null if the passage is invalid
+ * @throws {Error} On API failure or timeout
+ *
+ * @example
+ * const url = await esvAudioUrl('John 3');
+ * // "https://audio.esv.org/hw/John%203.mp3"
+ */
+async function esvAudioUrl(passage) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const url = `${ESV_AUDIO_URL}?${new URLSearchParams({ q: passage })}`;
+
+  try {
+    const response = await fetchFn(url, {
+      method: "GET",
+      headers: ESV_HEADERS,
+      redirect: "manual",
+      signal: controller.signal,
+    });
+
+    const location = response.headers.get("location");
+    if (response.status >= 300 && response.status < 400 && location) {
+      return new URL(location, url).toString();
+    }
+    if (response.status === 400) return null;
+
+    throw new Error(`ESV audio request failed with status ${response.status}`);
+  } catch (error) {
+    if (error.name === "AbortError") {
+      throw new Error(
+        `ESV API request timed out after ${REQUEST_TIMEOUT_MS}ms`,
+      );
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 module.exports = {
   esvPassageRequest,
   esvSearchRequest,
+  esvAudioUrl,
 };
