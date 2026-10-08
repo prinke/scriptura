@@ -25,7 +25,8 @@ async function connectMongo() {
 		throw new Error('MONGO_URI is not defined in the environment variables.');
 	}
 
-	client = new MongoClient(uri);
+	// Fail fast instead of the 30s default so lookups don't stall commands
+	client = new MongoClient(uri, { serverSelectionTimeoutMS: 5000 });
 	await client.connect();
 	
 	db = client.db();

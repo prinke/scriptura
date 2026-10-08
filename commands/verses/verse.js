@@ -120,8 +120,12 @@ function resolveToggle(setting, defaultValue) {
  * @param {Object} [details] - Optional details (passed to errorEmbed)
  * @returns {Promise<void>}
  */
-function replyError(interaction, title, details) {
-	return interaction.reply(errorReply(title, details));
+async function replyError(interaction, title, details) {
+	if (!interaction.deferred) return interaction.reply(errorReply(title, details));
+
+	// The deferred placeholder is public; swap it for an ephemeral error
+	await interaction.deleteReply().catch(() => {});
+	return interaction.followUp(errorReply(title, details));
 }
 
 /**
@@ -247,7 +251,7 @@ async function sendPaginatedSearch(interaction, { pageSize, fetchPage, errorDeta
 		totalPages = Math.max(1, Math.ceil(first.totalItems / pageSize));
 	}
 
-	const message = await interaction.reply({
+	const message = await interaction.editReply({
 		embeds: [first.embed],
 		components: totalPages > 1 ? [buildRow()] : [],
 	});
@@ -340,7 +344,7 @@ async function handleEsv(interaction, verseQuery, translation, displayPrefs, emb
 			embedOptions,
 		);
 
-		return interaction.reply({ embeds: [embed] });
+		return interaction.editReply({ embeds: [embed] });
 	}
 
 	let searchResult;
@@ -482,7 +486,7 @@ async function handleBibleBrain(interaction, verseQuery, translation, displayPre
 			translation,
 			embedOptions,
 		);
-		return interaction.reply({ embeds: [embed] });
+		return interaction.editReply({ embeds: [embed] });
 	}
 
 	if (result.kind === 'search') {
@@ -551,6 +555,9 @@ async function execute(interaction) {
 			hint: 'Try /verse search with a reference or phrase, or /verse daily.',
 		});
 	}
+
+	// Mongo + API lookups can exceed Discord's 3s window, so acknowledge first
+	await interaction.deferReply();
 
 	let displayPrefs = DEFAULT_DISPLAY_PREFS;
 	try {
