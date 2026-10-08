@@ -139,14 +139,20 @@ client.once(Events.ClientReady, (readyClient) => {
 	console.log(`[SUCCESS] Bot is ready! Logged in as ${readyClient.user.tag}`);
 	updateDailyStatus(readyClient);
 	scheduleDailyStatusUpdates(readyClient);
-	startDailyVerseScheduler(readyClient);
+	// The scheduler reads from Mongo, so wait for the connection first
+	mongoReady.then((connected) => {
+		if (connected) startDailyVerseScheduler(readyClient);
+	});
 });
+
+const mongoReady = connectMongo()
+	.then(() => true)
+	.catch((error) => {
+		console.error('[ERROR] Failed to connect to MongoDB:', error);
+		return false;
+	});
 
 // Login to Discord using the bot token from environment variables
-connectMongo().catch((error) => {
-	console.error('[ERROR] Failed to connect to MongoDB:', error);
-});
-
 client.login(process.env.TOKEN);
 
 /**
