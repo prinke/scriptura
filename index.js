@@ -25,6 +25,7 @@ const { connectMongo } = require('./helpers/mongo');
 const { getDailyVerseReference } = require('./helpers/daily_verse');
 const { handleVoiceStateUpdate } = require('./helpers/voice_session');
 const { startDailyVerseScheduler } = require('./helpers/daily_verse_scheduler');
+const { startUptimeHeartbeat } = require('./helpers/uptime_heartbeat');
 
 // Initialize Discord client with required intents.
 // GuildVoiceStates lets the bot see which voice channel a user is in.
@@ -139,6 +140,7 @@ client.once(Events.ClientReady, (readyClient) => {
 	console.log(`[SUCCESS] Bot is ready! Logged in as ${readyClient.user.tag}`);
 	updateDailyStatus(readyClient);
 	scheduleDailyStatusUpdates(readyClient);
+	startUptimeHeartbeat(readyClient);
 	// The scheduler reads from Mongo, so wait for the connection first
 	mongoReady.then((connected) => {
 		if (connected) startDailyVerseScheduler(readyClient);
