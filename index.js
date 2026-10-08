@@ -107,6 +107,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 		const errorMessage = errorReply('Something went wrong', {
 			description: 'An unexpected error occurred while running this command.',
 			hint: 'Please try again in a moment.',
+			status: true,
 		});
 
 		// Send error response based on interaction state

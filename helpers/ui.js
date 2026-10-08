@@ -15,6 +15,9 @@ const COLORS = Object.freeze({
 	muted: 0x4F545C,
 });
 
+/** @constant {string} Public status page for the bot */
+const STATUS_URL = 'https://status.prinke.dev/status/scriptura';
+
 /**
  * Truncates text to a maximum length, appending an ellipsis when cut.
  *
@@ -47,14 +50,16 @@ function bibleGatewayUrl(reference, translation) {
  * @param {string} [details.query] - The query that failed
  * @param {string} [details.translation] - The translation used
  * @param {string} [details.hint] - Suggestion for the user
+ * @param {boolean} [details.status] - Link the status page (for outages, not user mistakes)
  * @returns {EmbedBuilder} Error embed
  */
-function errorEmbed(title, { description, query, translation, hint } = {}) {
+function errorEmbed(title, { description, query, translation, hint, status } = {}) {
 	const embed = new EmbedBuilder().setColor(COLORS.error).setTitle(title);
 
 	const lines = [];
 	if (description) lines.push(description);
 	if (hint) lines.push(`-# ${hint}`);
+	if (status) lines.push(`-# Check the [status page](${STATUS_URL}) for ongoing issues.`);
 	if (lines.length) embed.setDescription(lines.join('\n'));
 
 	const meta = [];
@@ -78,6 +83,7 @@ function errorReply(title, details) {
 
 module.exports = {
 	COLORS,
+	STATUS_URL,
 	truncate,
 	bibleGatewayUrl,
 	errorEmbed,

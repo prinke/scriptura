@@ -237,7 +237,7 @@ async function sendPaginatedSearch(interaction, { pageSize, fetchPage, errorDeta
 
 	const first = await fetchPage(0);
 	if (first.error) {
-		return replyError(interaction, GENERIC_ERROR, errorDetails);
+		return replyError(interaction, GENERIC_ERROR, { ...errorDetails, status: true });
 	}
 
 	if (!first.hasResults) {
@@ -267,7 +267,7 @@ async function sendPaginatedSearch(interaction, { pageSize, fetchPage, errorDeta
 	const updatePage = async (newPage, i) => {
 		const res = await fetchPage(newPage);
 		if (res.error) {
-			await i.reply(errorReply(GENERIC_ERROR, errorDetails));
+			await i.reply(errorReply(GENERIC_ERROR, { ...errorDetails, status: true }));
 			return;
 		}
 
@@ -333,6 +333,7 @@ async function handleEsv(interaction, verseQuery, translation, displayPrefs, emb
 			description: 'Couldn’t reach the ESV API. Please try again in a moment.',
 			query: verseQuery,
 			translation,
+			status: true,
 		});
 	}
 
@@ -357,6 +358,7 @@ async function handleEsv(interaction, verseQuery, translation, displayPrefs, emb
 			description: 'Couldn’t reach the ESV API. Please try again in a moment.',
 			query: verseQuery,
 			translation,
+			status: true,
 		});
 	}
 
@@ -460,6 +462,7 @@ async function handleBibleBrain(interaction, verseQuery, translation, displayPre
 			description: 'Couldn’t reach Bible Brain. Please try again in a moment.',
 			query: verseQuery,
 			translation,
+			status: true,
 		});
 	}
 

@@ -199,6 +199,7 @@ async function handleSet(interaction) {
 		console.error('[ERROR] Failed to save daily verse settings:', error);
 		return interaction.reply(errorReply('Couldn’t save the schedule', {
 			hint: 'Please try again in a moment.',
+			status: true,
 		}));
 	}
 
@@ -227,6 +228,7 @@ async function handleView(interaction) {
 		console.error('[ERROR] Failed to load daily verse settings:', error);
 		return interaction.reply(errorReply('Couldn’t load the schedule', {
 			hint: 'Please try again in a moment.',
+			status: true,
 		}));
 	}
 
@@ -263,6 +265,7 @@ async function handleDisable(interaction) {
 		console.error('[ERROR] Failed to clear daily verse settings:', error);
 		return interaction.reply(errorReply('Couldn’t update the schedule', {
 			hint: 'Please try again in a moment.',
+			status: true,
 		}));
 	}
 

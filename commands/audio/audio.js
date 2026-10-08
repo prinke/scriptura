@@ -202,6 +202,7 @@ async function handlePlay(interaction) {
 			description: 'Couldn’t reach the ESV API. Please try again in a moment.',
 			query,
 			translation: 'ESV',
+			status: true,
 		});
 	}
 

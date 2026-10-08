@@ -282,6 +282,7 @@ async function execute(interaction) {
 		console.error('[ERROR] Failed to load preferences:', error);
 		return interaction.reply(errorReply('Couldn’t load your preferences', {
 			hint: 'Please try again in a moment.',
+			status: true,
 		}));
 	}
 
@@ -306,6 +307,7 @@ async function execute(interaction) {
 			console.error('[ERROR] Failed to save preferences:', error);
 			await i.reply(errorReply('Couldn’t save that change', {
 				hint: 'Please try again in a moment.',
+				status: true,
 			})).catch((replyError) => {
 				console.error('[ERROR] Failed to send preferences error:', replyError);
 			});
