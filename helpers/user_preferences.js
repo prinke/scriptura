@@ -24,7 +24,7 @@ const DEFAULT_VERSE_DISPLAY = Object.freeze({
  * @returns {Promise<string|null>} Preferred translation code, or null if not set
  */
 async function getPreferredTranslation(userId) {
-	const db = getDb();
+	const db = await getDb();
 	const doc = await db.collection(COLLECTION_NAME).findOne({ userId });
 	return doc?.preferredTranslation ?? null;
 }
@@ -36,7 +36,7 @@ async function getPreferredTranslation(userId) {
  * @returns {Promise<{footnotes: boolean, headings: 'auto'|'on'|'off', verseNumbers: boolean, lineByLine: 'auto'|'on'|'off'}>} Verse display preferences
  */
 async function getVerseDisplayPreferences(userId) {
-	const db = getDb();
+	const db = await getDb();
 	const doc = await db.collection(COLLECTION_NAME).findOne({ userId });
 	const stored = doc?.verseDisplay ?? {};
 	return {
@@ -53,7 +53,7 @@ async function getVerseDisplayPreferences(userId) {
  * @returns {Promise<void>}
  */
 async function setPreferredTranslation(userId, translation) {
-	const db = getDb();
+	const db = await getDb();
 	await db.collection(COLLECTION_NAME).updateOne(
 		{ userId },
 		{
@@ -74,7 +74,7 @@ async function setPreferredTranslation(userId, translation) {
  * @returns {Promise<void>}
  */
 async function setVerseDisplayPreferences(userId, updates) {
-	const db = getDb();
+	const db = await getDb();
 	const setPayload = {
 		updatedAt: new Date(),
 	};
@@ -110,7 +110,7 @@ async function setVerseDisplayPreferences(userId, updates) {
  * @returns {Promise<void>}
  */
 async function resetVerseDisplayPreferences(userId) {
-	const db = getDb();
+	const db = await getDb();
 	await db.collection(COLLECTION_NAME).updateOne(
 		{ userId },
 		{

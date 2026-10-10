@@ -30,7 +30,7 @@ const COLLECTION_NAME = 'guild_settings';
  * @returns {Promise<DailyVerseSettings|null>} Settings, or null if not configured
  */
 async function getDailyVerseSettings(guildId) {
-	const db = getDb();
+	const db = await getDb();
 	const doc = await db.collection(COLLECTION_NAME).findOne({ guildId });
 	return doc?.dailyVerse ?? null;
 }
@@ -43,7 +43,7 @@ async function getDailyVerseSettings(guildId) {
  * @returns {Promise<void>}
  */
 async function setDailyVerseSettings(guildId, settings) {
-	const db = getDb();
+	const db = await getDb();
 	await db.collection(COLLECTION_NAME).updateOne(
 		{ guildId },
 		{
@@ -63,7 +63,7 @@ async function setDailyVerseSettings(guildId, settings) {
  * @returns {Promise<boolean>} True if settings existed
  */
 async function clearDailyVerseSettings(guildId) {
-	const db = getDb();
+	const db = await getDb();
 	const result = await db.collection(COLLECTION_NAME).updateOne(
 		{ guildId, dailyVerse: { $exists: true } },
 		{
@@ -81,7 +81,7 @@ async function clearDailyVerseSettings(guildId) {
  * @returns {Promise<Array<{guildId: string, dailyVerse: DailyVerseSettings}>>} Due guilds
  */
 async function findDueDailyVerses(now) {
-	const db = getDb();
+	const db = await getDb();
 	return db
 		.collection(COLLECTION_NAME)
 		.find(
@@ -100,7 +100,7 @@ async function findDueDailyVerses(now) {
  * @returns {Promise<boolean>} True if this caller claimed the post
  */
 async function claimDailyVerse(guildId, expectedNextPostAt, nextPostAt) {
-	const db = getDb();
+	const db = await getDb();
 	const result = await db.collection(COLLECTION_NAME).updateOne(
 		{ guildId, 'dailyVerse.nextPostAt': expectedNextPostAt },
 		{ $set: { 'dailyVerse.nextPostAt': nextPostAt } },
@@ -116,7 +116,7 @@ async function claimDailyVerse(guildId, expectedNextPostAt, nextPostAt) {
  * @returns {Promise<void>}
  */
 async function markDailyVersePosted(guildId, postedAt) {
-	const db = getDb();
+	const db = await getDb();
 	await db.collection(COLLECTION_NAME).updateOne(
 		{ guildId },
 		{ $set: { 'dailyVerse.lastPostedAt': postedAt } },

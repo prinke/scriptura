@@ -143,17 +143,28 @@ client.once(Events.ClientReady, (readyClient) => {
 	scheduleDailyStatusUpdates(readyClient);
 	startUptimeHeartbeat(readyClient);
 	// The scheduler reads from Mongo, so wait for the connection first
-	mongoReady.then((connected) => {
-		if (connected) startDailyVerseScheduler(readyClient);
-	});
+	mongoReady.then(() => startDailyVerseScheduler(readyClient));
 });
 
-const mongoReady = connectMongo()
-	.then(() => true)
-	.catch((error) => {
-		console.error('[ERROR] Failed to connect to MongoDB:', error);
-		return false;
-	});
+/**
+ * Connects to MongoDB, retrying with backoff until it succeeds so a failed
+ * startup attempt doesn't leave the bot without a database.
+ *
+ * @returns {Promise<void>}
+ */
+async function connectMongoWithRetry() {
+	for (let delay = 5000; ; delay = Math.min(delay * 2, 60000)) {
+		try {
+			await connectMongo();
+			return;
+		} catch (error) {
+			console.error(`[ERROR] Failed to connect to MongoDB, retrying in ${delay / 1000}s:`, error);
+			await new Promise((resolve) => setTimeout(resolve, delay));
+		}
+	}
+}
+
+const mongoReady = connectMongoWithRetry();
 
 // Login to Discord using the bot token from environment variables
 client.login(process.env.TOKEN);
